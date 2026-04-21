@@ -1,5 +1,3 @@
-"use server";
-
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -7,10 +5,11 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
+import { getUserHomeDir } from "@/lib/userHome";
 
 const execAsync = promisify(exec);
 
-const getCodexDir = () => path.join(os.homedir(), ".codex");
+const getCodexDir = () => path.join(getUserHomeDir(), ".codex");
 const getCodexConfigPath = () => path.join(getCodexDir(), "config.toml");
 const getCodexAuthPath = () => path.join(getCodexDir(), "auth.json");
 
@@ -144,6 +143,7 @@ export async function POST(request) {
     // Add subagent configuration
     const effectiveSubagentModel = subagentModel || model;
     setNestedSection(parsed, "agents.subagent", {
+      description: "General-purpose coding subagent routed through 9Router",
       model: effectiveSubagentModel,
     });
 

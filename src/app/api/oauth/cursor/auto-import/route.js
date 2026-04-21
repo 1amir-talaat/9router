@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { access, constants } from "fs/promises";
-import { homedir } from "os";
 import { join } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { getUserHomeDir } from "@/lib/userHome";
+
+export const runtime = "nodejs";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,7 +18,7 @@ const MACHINE_ID_KEYS = [
 
 /** Get candidate db paths by platform */
 function getCandidatePaths(platform) {
-  const home = homedir();
+  const home = getUserHomeDir();
 
   if (platform === "darwin") {
     return [
@@ -205,7 +207,7 @@ export async function GET() {
         cursorInstalled = true;
       } catch {
         try {
-          const desktopFile = join(homedir(), ".local/share/applications/cursor.desktop");
+          const desktopFile = join(getUserHomeDir(), ".local/share/applications/cursor.desktop");
           await access(desktopFile, constants.R_OK);
           cursorInstalled = true;
         } catch { /* not found */ }

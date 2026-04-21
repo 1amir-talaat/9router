@@ -1,8 +1,12 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { syncOpenCodeAccounts } from "@/lib/opencodeAccountSync";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { getUserHomeDir } from "@/lib/userHome";
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
@@ -29,6 +33,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const providerId = resolveProviderId(provider);
+
+    if (providerId === "codex" || providerId === "antigravity") {
+      await syncOpenCodeAccounts(providerId);
+    }
 
     // Inject a virtual connection for no-auth free providers
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -272,4 +280,41 @@ export function extractApiKey(request) {
 export async function isValidApiKey(apiKey) {
   if (!apiKey) return false;
   return await validateApiKey(apiKey);
+}
+
+/**
+ * Accept either a 9Router API key or a live imported OAuth access token.
+ * This allows native tools like Codex to call the local 9Router endpoint
+ * using their provider bearer token while keeping endpoint auth enabled.
+ */
+export async function isValidRequestAuthToken(apiKey) {
+  if (!apiKey) return false;
+
+  if (await validateApiKey(apiKey)) {
+    return true;
+  }
+
+  const connections = await getProviderConnections({ isActive: true });
+  if (connections.some((connection) =>
+    connection.authType === "oauth" &&
+    typeof connection.accessToken === "string" &&
+    connection.accessToken === apiKey,
+  )) {
+    return true;
+  }
+
+  // Codex CLI keeps its freshest active access token in ~/.codex/auth.json.
+  // Accept it for local endpoint auth when requireApiKey is enabled.
+  try {
+    const authPath = path.join(getUserHomeDir(), ".codex", "auth.json");
+    const authData = JSON.parse(await fs.readFile(authPath, "utf8"));
+    const codexAccessToken = authData?.tokens?.access_token;
+    if (typeof codexAccessToken === "string" && codexAccessToken === apiKey) {
+      return true;
+    }
+  } catch {
+    // Ignore missing or unreadable Codex auth file.
+  }
+
+  return false;
 }

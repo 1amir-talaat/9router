@@ -1,17 +1,16 @@
-"use server";
-
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { getUserHomeDir } from "@/lib/userHome";
 
 const execAsync = promisify(exec);
 
 // Get claude settings path based on OS
 const getClaudeSettingsPath = () => {
-  const homeDir = os.homedir();
+  const homeDir = getUserHomeDir();
   return path.join(homeDir, ".claude", "settings.json");
 };
 

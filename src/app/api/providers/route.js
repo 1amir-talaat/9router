@@ -6,6 +6,7 @@ import {
   getProviderNodes,
   getProxyPoolById,
 } from "@/models";
+import { syncOpenCodeAccounts } from "@/lib/opencodeAccountSync";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { FREE_TIER_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 
@@ -48,6 +49,7 @@ async function normalizeProxyPoolId(proxyPoolId) {
 // GET /api/providers - List all connections
 export async function GET() {
   try {
+    await syncOpenCodeAccounts();
     const connections = await getProviderConnections();
 
     // Build nodeNameMap for compatible providers (id → name)

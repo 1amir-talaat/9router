@@ -1,15 +1,14 @@
-"use server";
-
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { getUserHomeDir } from "@/lib/userHome";
 
 const execAsync = promisify(exec);
 
-const getConfigDir = () => path.join(os.homedir(), ".config", "opencode");
+const getConfigDir = () => path.join(getUserHomeDir(), ".config", "opencode");
 const getConfigPath = () => path.join(getConfigDir(), "opencode.json");
 
 // Check if opencode CLI is installed (via which/where or config file exists)
