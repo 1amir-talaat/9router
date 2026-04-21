@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
+  output: process.platform === "win32" ? undefined : "standalone",
   serverExternalPackages: ["better-sqlite3"],
   images: {
     unoptimized: true
