@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal } from "@/shared/components";
+import { getEffectiveQuotaRoutingState } from "@/sse/services/quotaState";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -27,6 +28,23 @@ function CooldownTimer({ until }) {
 }
 
 CooldownTimer.propTypes = { until: PropTypes.string.isRequired };
+
+function getQuotaBadge(connection) {
+  const { state: quotaState, resetAt } = getEffectiveQuotaRoutingState(connection);
+  const futureResetAt = resetAt && new Date(resetAt).getTime() > Date.now()
+    ? resetAt
+    : null;
+
+  if (quotaState === "available") {
+    return { label: "Quota OK", variant: "success", resetAt: null };
+  }
+
+  if (quotaState === "exhausted") {
+    return { label: "Quota exhausted", variant: "error", resetAt: futureResetAt };
+  }
+
+  return { label: "Quota unknown", variant: "default", resetAt: null };
+}
 
 // ── ConnectionRow ──────────────────────────────────────────────
 function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete }) {
@@ -85,6 +103,7 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
   }, [showProxyDropdown]);
 
   const effectiveStatus = connection.testStatus === "unavailable" && !isCooldown ? "active" : connection.testStatus;
+  const quotaBadge = getQuotaBadge(connection);
 
   const getStatusVariant = () => {
     if (connection.isActive === false) return "default";
@@ -121,8 +140,10 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
+            <Badge variant={quotaBadge.variant} size="sm">{quotaBadge.label}</Badge>
             {hasAnyProxy && <Badge variant={proxyBadgeVariant} size="sm">Proxy</Badge>}
             {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
+            {quotaBadge.resetAt && connection.isActive !== false && <CooldownTimer until={quotaBadge.resetAt} />}
             {connection.lastError && connection.isActive !== false && (
               <span className="text-xs text-red-500 truncate max-w-[300px]" title={connection.lastError}>{connection.lastError}</span>
             )}
@@ -306,8 +327,13 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [providerStrategy, setProviderStrategy] = useState(null);
-  const [providerStickyLimit, setProviderStickyLimit] = useState("1");
+  const [providerStrategy, setProviderStrategy] = useState("");
+  const routingOptions = [
+    { value: "", label: "Use Default" },
+    { value: "fill-first", label: "Fill First" },
+    { value: "sticky", label: "Sticky" },
+    { value: "round-robin", label: "Round Robin" },
+  ];
 
   const fetch_ = useCallback(async () => {
     try {
@@ -322,22 +348,20 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       if (connRes.ok) setConnections((connData.connections || []).filter((c) => c.provider === providerId));
       if (proxyRes.ok) setProxyPools(proxyData.proxyPools || []);
       const override = (settingsData.providerStrategies || {})[providerId] || {};
-      setProviderStrategy(override.fallbackStrategy || null);
-      setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      setProviderStrategy(override.fallbackStrategy || "");
     } catch (e) { console.log("ConnectionsCard fetch error:", e); }
     finally { setLoading(false); }
   }, [providerId]);
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const saveStrategy = async (strategy, stickyLimit) => {
+  const saveStrategy = async (strategy) => {
     try {
       const res = await fetch("/api/settings", { cache: "no-store" });
       const data = res.ok ? await res.json() : {};
       const current = data.providerStrategies || {};
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
-      if (strategy === "round-robin" && stickyLimit !== "") override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
       const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
@@ -400,27 +424,16 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       <Card>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Connections</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Round Robin</span>
-            <Toggle
-              checked={providerStrategy === "round-robin"}
-              onChange={(enabled) => {
-                const strategy = enabled ? "round-robin" : null;
-                setProviderStrategy(strategy);
-                if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-                saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
+          <div className="w-44">
+            <Select
+              value={providerStrategy}
+              onChange={(e) => {
+                setProviderStrategy(e.target.value);
+                saveStrategy(e.target.value);
               }}
+              options={routingOptions}
+              aria-label="Provider account routing strategy"
             />
-            {providerStrategy === "round-robin" && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-text-muted">Sticky:</span>
-                <input
-                  type="number" min={1} value={providerStickyLimit}
-                  onChange={(e) => { setProviderStickyLimit(e.target.value); saveStrategy("round-robin", e.target.value); }}
-                  className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                />
-              </div>
-            )}
           </div>
         </div>
 

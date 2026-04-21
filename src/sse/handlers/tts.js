@@ -1,6 +1,6 @@
 import {
   extractApiKey, isValidApiKey,
-  getProviderCredentials, markAccountUnavailable,
+  getProviderCredentials, markAccountUnavailable, clearAccountError,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
@@ -45,7 +45,10 @@ export async function handleTts(request) {
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
     const result = await handleTtsCore({ provider, model, input: body.input, responseFormat });
-    if (result.success) return result.response;
+    if (result.success) {
+      await clearAccountError(credentials.connectionId, credentials, model);
+      return result.response;
+    }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
   }
 
@@ -57,11 +60,14 @@ export async function handleTts(request) {
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
 
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
+    if (!credentials || credentials.allRateLimited || credentials.allQuotaExhausted) {
+      if (credentials?.allRateLimited || credentials?.allQuotaExhausted) {
         const msg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        if (credentials.retryAfter) {
+          return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        }
+        return errorResponse(status, `[${provider}/${model}] ${msg}`);
       }
       if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");

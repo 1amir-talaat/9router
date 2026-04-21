@@ -4,6 +4,7 @@ import "open-sse/index.js";
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { getExecutor } from "open-sse/executors/index.js";
+import { buildQuotaStateUpdate } from "@/sse/services/quotaState";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -142,6 +143,8 @@ export async function GET(request, { params }) {
         console.warn(`[Usage] ${connection.provider}: force refresh failed: ${retryError.message}`);
       }
     }
+
+    await updateProviderConnection(connection.id, buildQuotaStateUpdate(connection.provider, usage, "api"));
 
     return Response.json(usage);
   } catch (error) {

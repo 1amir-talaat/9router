@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Card, Button, Toggle, Input } from "@/shared/components";
+import { Card, Button, Toggle, Input, Select } from "@/shared/components";
 import { useTheme } from "@/shared/hooks/useTheme";
 import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
@@ -24,6 +24,12 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+
+  const routingOptions = [
+    { value: "fill-first", label: "Fill First" },
+    { value: "sticky", label: "Sticky" },
+    { value: "round-robin", label: "Round Robin" },
+  ];
 
   useEffect(() => {
     fetch("/api/settings")
@@ -202,24 +208,6 @@ export default function ProfilePage() {
       }
     } catch (err) {
       console.error("Failed to update combo strategy:", err);
-    }
-  };
-
-  const updateStickyLimit = async (limit) => {
-    const numLimit = parseInt(limit);
-    if (isNaN(numLimit) || numLimit < 1) return;
-
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stickyRoundRobinLimit: numLimit }),
-      });
-      if (res.ok) {
-        setSettings(prev => ({ ...prev, stickyRoundRobinLimit: numLimit }));
-      }
-    } catch (err) {
-      console.error("Failed to update sticky limit:", err);
     }
   };
 
@@ -498,40 +486,23 @@ export default function ProfilePage() {
             <h3 className="text-lg font-semibold">Routing Strategy</h3>
           </div>
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-medium">Round Robin</p>
+                <p className="font-medium">Account Routing</p>
                 <p className="text-sm text-text-muted">
-                  Cycle through accounts to distribute load
+                  Choose the default strategy used when selecting between multiple accounts
                 </p>
               </div>
-              <Toggle
-                checked={settings.fallbackStrategy === "round-robin"}
-                onChange={() => updateFallbackStrategy(settings.fallbackStrategy === "round-robin" ? "fill-first" : "round-robin")}
-                disabled={loading}
-              />
-            </div>
-
-            {/* Sticky Round Robin Limit */}
-            {settings.fallbackStrategy === "round-robin" && (
-              <div className="flex items-center justify-between pt-2 border-t border-border/50">
-                <div>
-                  <p className="font-medium">Sticky Limit</p>
-                  <p className="text-sm text-text-muted">
-                    Calls per account before switching
-                  </p>
-                </div>
-                <Input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={settings.stickyRoundRobinLimit || 3}
-                  onChange={(e) => updateStickyLimit(e.target.value)}
+              <div className="w-48">
+                <Select
+                  value={settings.fallbackStrategy || "fill-first"}
+                  onChange={(e) => updateFallbackStrategy(e.target.value)}
+                  options={routingOptions}
                   disabled={loading}
-                  className="w-20 text-center"
+                  aria-label="Default account routing strategy"
                 />
               </div>
-            )}
+            </div>
 
             {/* Combo Round Robin */}
             <div className="flex items-center justify-between pt-4 border-t border-border/50">
@@ -549,9 +520,11 @@ export default function ProfilePage() {
             </div>
 
             <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
-              {settings.fallbackStrategy === "round-robin"
-                ? `Currently distributing requests across all available accounts with ${settings.stickyRoundRobinLimit || 3} calls per account.`
-                : "Currently using accounts in priority order (Fill First)."}
+              {settings.fallbackStrategy === "sticky"
+                ? "Currently reusing the most recently routed available account until it becomes unavailable."
+                : settings.fallbackStrategy === "round-robin"
+                  ? "Currently rotating to the least recently used available account on every request."
+                  : "Currently using accounts in priority order (Fill First)."}
             </p>
           </div>
         </Card>

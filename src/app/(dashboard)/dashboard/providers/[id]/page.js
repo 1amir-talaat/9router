@@ -41,12 +41,17 @@ export default function ProviderDetailPage() {
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
-  const [providerStrategy, setProviderStrategy] = useState(null); // null = use global, "round-robin" = override
-  const [providerStickyLimit, setProviderStickyLimit] = useState("");
+  const [providerStrategy, setProviderStrategy] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const { copied, copy } = useCopyToClipboard();
+  const providerRoutingOptions = [
+    { value: "", label: "Use Default" },
+    { value: "fill-first", label: "Fill First" },
+    { value: "sticky", label: "Sticky" },
+    { value: "round-robin", label: "Round Robin" },
+  ];
 
   const providerInfo = providerNode
     ? {
@@ -117,8 +122,7 @@ export default function ProviderDetailPage() {
       }
       // Load per-provider strategy override
       const override = (settingsData.providerStrategies || {})[providerId] || {};
-      setProviderStrategy(override.fallbackStrategy || null);
-      setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      setProviderStrategy(override.fallbackStrategy || "");
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -165,18 +169,14 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const saveProviderStrategy = async (strategy, stickyLimit) => {
+  const saveProviderStrategy = async (strategy) => {
     try {
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
 
-      // Build override: null strategy means remove override, use global
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
-      if (strategy === "round-robin" && stickyLimit !== "") {
-        override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
-      }
 
       const updated = { ...current };
       if (Object.keys(override).length === 0) {
@@ -195,17 +195,9 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleRoundRobinToggle = (enabled) => {
-    const strategy = enabled ? "round-robin" : null;
-    const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
-    if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
+  const handleProviderStrategyChange = (strategy) => {
     setProviderStrategy(strategy);
-    saveProviderStrategy(strategy, sticky);
-  };
-
-  const handleStickyLimitChange = (value) => {
-    setProviderStickyLimit(value);
-    saveProviderStrategy("round-robin", value);
+    saveProviderStrategy(strategy);
   };
 
   const saveThinkingConfig = async (mode) => {
@@ -880,26 +872,13 @@ export default function ProviderDetailPage() {
                   </select>
                 </div>
               )} */}
-              {/* Round Robin toggle */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                <Toggle
-                  checked={providerStrategy === "round-robin"}
-                  onChange={handleRoundRobinToggle}
+              <div className="w-44">
+                <Select
+                  value={providerStrategy}
+                  onChange={(e) => handleProviderStrategyChange(e.target.value)}
+                  options={providerRoutingOptions}
+                  aria-label="Provider account routing strategy"
                 />
-                {providerStrategy === "round-robin" && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-text-muted">Sticky:</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={providerStickyLimit}
-                      onChange={(e) => handleStickyLimitChange(e.target.value)}
-                      placeholder="1"
-                      className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>

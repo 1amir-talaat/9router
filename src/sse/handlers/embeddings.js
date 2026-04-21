@@ -88,12 +88,15 @@ export async function handleEmbeddings(request) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
 
     // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
+    if (!credentials || credentials.allRateLimited || credentials.allQuotaExhausted) {
+      if (credentials?.allRateLimited || credentials?.allQuotaExhausted) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("EMBEDDINGS", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        log.warn("EMBEDDINGS", `[${provider}/${model}] ${errorMsg}${credentials.retryAfterHuman ? ` (${credentials.retryAfterHuman})` : ""}`);
+        if (credentials.retryAfter) {
+          return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        }
+        return errorResponse(status, `[${provider}/${model}] ${errorMsg}`);
       }
       if (excludeConnectionIds.size === 0) {
         log.error("AUTH", `No credentials for provider: ${provider}`);
