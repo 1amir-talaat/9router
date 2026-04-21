@@ -68,6 +68,7 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
+  const showThinkingControl = !!AI_PROVIDERS[providerId]?.thinkingConfig;
   
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
   const providerDisplayAlias = isCompatible
@@ -865,21 +866,6 @@ export default function ProviderDetailPage() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Connections</h2>
             <div className="flex items-center gap-4">
-              {/* Thinking config */}
-              {/* {thinkingConfig && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-text-muted font-medium">Thinking</span>
-                  <select
-                    value={thinkingMode}
-                    onChange={(e) => handleThinkingModeChange(e.target.value)}
-                    className="text-xs px-2 py-1 border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                  >
-                    {thinkingConfig.options.map((opt) => (
-                      <option key={opt} value={opt}>{opt.charAt(0).toUpperCase() + opt.slice(1)}</option>
-                    ))}
-                  </select>
-                </div>
-              )} */}
               {/* Round Robin toggle */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-text-muted font-medium">Round Robin</span>
@@ -960,6 +946,20 @@ export default function ProviderDetailPage() {
           <h2 className="text-lg font-semibold">
             {"Available Models"}
           </h2>
+          {showThinkingControl && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted font-medium">Effort</span>
+              <select
+                value={thinkingMode}
+                onChange={(e) => handleThinkingModeChange(e.target.value)}
+                className="text-xs px-2 py-1 border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+              >
+                {thinkingConfig.options.map((opt) => (
+                  <option key={opt} value={opt}>{opt.charAt(0).toUpperCase() + opt.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         {!!modelsTestError && (
           <p className="text-xs text-red-500 mb-3 break-words">{modelsTestError}</p>

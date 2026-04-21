@@ -12,6 +12,209 @@ import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
 
+function normalizeQuotaName(quota = {}) {
+  return String(quota.modelKey || quota.name || "unknown").trim();
+}
+
+function mergeQuotaRows(quotas = []) {
+  const merged = new Map();
+
+  for (const quota of quotas) {
+    if (!quota || quota.message) continue;
+    const key = normalizeQuotaName(quota);
+    const existing = merged.get(key);
+    const used = Number(quota.used) || 0;
+    const total = Number(quota.total) || 0;
+
+    if (existing) {
+      existing.used += used;
+      existing.total += total;
+      if (quota.resetAt) {
+        existing.resetAt = existing.resetAt
+          ? (new Date(quota.resetAt) > new Date(existing.resetAt) ? quota.resetAt : existing.resetAt)
+          : quota.resetAt;
+      }
+    } else {
+      merged.set(key, {
+        ...quota,
+        used,
+        total,
+        resetAt: quota.resetAt || null,
+      });
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function buildProviderGroups(connections, quotaData, loading, errors) {
+  const grouped = new Map();
+
+  for (const connection of connections) {
+    const providerId = connection.provider;
+    if (!grouped.has(providerId)) {
+      grouped.set(providerId, {
+        provider: providerId,
+        connections: [],
+      });
+    }
+    grouped.get(providerId).connections.push(connection);
+  }
+
+  return [...grouped.values()].map((group) => {
+    const accountIds = group.connections.map((conn) => conn.id);
+    const allQuotas = accountIds.flatMap((id) => quotaData[id]?.quotas || []);
+    const mergedQuotas = mergeQuotaRows(allQuotas);
+    const loadingCount = accountIds.filter((id) => !!loading[id]).length;
+    const errorEntries = accountIds
+      .map((id) => ({ id, error: errors[id] }))
+      .filter((entry) => !!entry.error);
+    const lowQuotaCount = mergedQuotas.filter((quota) => {
+      const percentage = calculatePercentage(quota.used, quota.total);
+      return quota.total > 0 && percentage < 30;
+    }).length;
+
+    return {
+      ...group,
+      mergedQuotas,
+      loadingCount,
+      errorEntries,
+      lowQuotaCount,
+      successCount: accountIds.filter((id) => {
+        const data = quotaData[id];
+        return !errors[id] && (data?.quotas?.length > 0 || data?.message);
+      }).length,
+      hasMessageOnly: mergedQuotas.length === 0 && accountIds.some((id) => quotaData[id]?.message),
+      message: group.connections.map((conn) => quotaData[conn.id]?.message).find(Boolean) || null,
+    };
+  });
+}
+
+function sortConnectionsByProvider(connections) {
+  return [...connections].sort((a, b) => {
+    const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
+    const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
+    if (orderA !== orderB) return orderA - orderB;
+    return a.provider.localeCompare(b.provider);
+  });
+}
+
+function ConnectionQuotaCard({
+  conn,
+  quota,
+  isLoading,
+  error,
+  deletingId,
+  togglingId,
+  onRefresh,
+  onEdit,
+  onDelete,
+  onToggle,
+}) {
+  const isInactive = conn.isActive === false;
+  const rowBusy = deletingId === conn.id || togglingId === conn.id;
+
+  return (
+    <Card padding="none" className={`min-w-0 ${isInactive ? "opacity-60" : ""}`}>
+      <div className="px-4 py-3 border-b border-black/10 dark:border-white/10">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
+              <ProviderIcon
+                src={`/providers/${conn.provider}.png`}
+                alt={conn.provider}
+                size={32}
+                className="object-contain"
+                fallbackText={conn.provider?.slice(0, 2).toUpperCase() || "PR"}
+              />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
+                {conn.provider}
+              </h3>
+              {conn.name && (
+                <p className="text-xs text-text-muted truncate">{conn.name}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => onRefresh(conn.id, conn.provider)}
+              disabled={isLoading || rowBusy}
+              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
+              title="Refresh quota"
+            >
+              <span
+                className={`material-symbols-outlined text-[18px] text-text-muted ${isLoading ? "animate-spin" : ""}`}
+              >
+                refresh
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onEdit(conn)}
+              disabled={rowBusy}
+              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
+              title="Edit connection"
+            >
+              <span className="material-symbols-outlined text-[18px]">edit</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(conn.id)}
+              disabled={rowBusy}
+              className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
+              title="Delete connection"
+            >
+              <span
+                className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
+              >
+                delete
+              </span>
+            </button>
+            <div
+              className="inline-flex items-center pl-0.5"
+              title={(conn.isActive ?? true) ? "Disable connection" : "Enable connection"}
+            >
+              <Toggle
+                size="sm"
+                checked={conn.isActive ?? true}
+                disabled={rowBusy}
+                onChange={(nextActive) => onToggle(conn.id, nextActive)}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-3 py-3">
+        {isLoading ? (
+          <div className="text-center py-5 text-text-muted">
+            <span className="material-symbols-outlined text-[28px] animate-spin">
+              progress_activity
+            </span>
+          </div>
+        ) : error ? (
+          <div className="text-center py-5">
+            <span className="material-symbols-outlined text-[28px] text-red-500">
+              error
+            </span>
+            <p className="mt-1.5 text-xs text-text-muted">{error}</p>
+          </div>
+        ) : quota?.message ? (
+          <div className="text-center py-5">
+            <p className="text-xs text-text-muted">{quota.message}</p>
+          </div>
+        ) : (
+          <QuotaTable quotas={quota?.quotas} compact />
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function ProviderLimits() {
   const [connections, setConnections] = useState([]);
   const [quotaData, setQuotaData] = useState({});
@@ -27,6 +230,7 @@ export default function ProviderLimits() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
+  const [expandedProvider, setExpandedProvider] = useState(null);
 
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
@@ -362,16 +566,11 @@ export default function ProviderLimits() {
       conn.authType === "oauth",
   );
 
-  // Sort providers by USAGE_SUPPORTED_PROVIDERS order, then alphabetically
-  const sortedConnections = [...filteredConnections].sort((a, b) => {
-    const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
-    const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
-    if (orderA !== orderB) return orderA - orderB;
-    return a.provider.localeCompare(b.provider);
-  });
+  const sortedConnections = sortConnectionsByProvider(filteredConnections);
+  const providerGroups = buildProviderGroups(sortedConnections, quotaData, loading, errors);
 
   // Calculate summary stats
-  const totalProviders = sortedConnections.length;
+  const totalProviders = providerGroups.length;
   const activeWithLimits = Object.values(quotaData).filter(
     (data) => data?.quotas?.length > 0,
   ).length;
@@ -455,134 +654,141 @@ export default function ProviderLimits() {
         </div>
       </div>
 
-      {/* Provider cards: 2 columns, compact */}
+      {/* Provider cards: grouped by provider */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {sortedConnections.map((conn) => {
-          const quota = quotaData[conn.id];
-          const isLoading = loading[conn.id];
-          const error = errors[conn.id];
-
-          // Use table layout for all providers
-          const isInactive = conn.isActive === false;
-          const rowBusy = deletingId === conn.id || togglingId === conn.id;
+        {providerGroups.map((group) => {
+          const isExpanded = expandedProvider === group.provider;
+          const isProviderLoading = group.loadingCount > 0;
+          const hasErrors = group.errorEntries.length > 0;
+          const hasLowQuota = group.lowQuotaCount > 0;
+          const accountCount = group.connections.length;
 
           return (
-            <Card
-              key={conn.id}
-              padding="none"
-              className={`min-w-0 ${isInactive ? "opacity-60" : ""}`}
-            >
-              <div className="px-4 py-3 border-b border-black/10 dark:border-white/10">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
-                      <ProviderIcon
-                        src={`/providers/${conn.provider}.png`}
-                        alt={conn.provider}
-                        size={32}
-                        className="object-contain"
-                        fallbackText={
-                          conn.provider?.slice(0, 2).toUpperCase() || "PR"
-                        }
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
-                        {conn.provider}
-                      </h3>
-                      {conn.name && (
-                        <p className="text-xs text-text-muted truncate">
-                          {conn.name}
-                        </p>
-                      )}
+            <div key={group.provider} className="space-y-3">
+              <Card padding="none" className="min-w-0 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setExpandedProvider((prev) => (prev === group.provider ? null : group.provider))}
+                  className="w-full text-left"
+                >
+                  <div className="px-4 py-3 border-b border-black/10 dark:border-white/10">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
+                          <ProviderIcon
+                            src={`/providers/${group.provider}.png`}
+                            alt={group.provider}
+                            size={32}
+                            className="object-contain"
+                            fallbackText={group.provider?.slice(0, 2).toUpperCase() || "PR"}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
+                              {group.provider}
+                            </h3>
+                            <span className="text-xs text-text-muted">
+                              {accountCount} {accountCount === 1 ? "account" : "accounts"}
+                            </span>
+                            {hasErrors && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-400">
+                                {group.errorEntries.length} error{group.errorEntries.length === 1 ? "" : "s"}
+                              </span>
+                            )}
+                            {hasErrors && group.successCount > 0 && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                                Partial data
+                              </span>
+                            )}
+                            {hasLowQuota && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-400">
+                                Low quota
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-text-muted truncate">
+                            Combined usage across all {group.provider} accounts
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            Promise.all(group.connections.map((conn) => refreshProvider(conn.id, conn.provider))).then(() => {
+                              setLastUpdated(new Date());
+                            });
+                          }}
+                          disabled={isProviderLoading}
+                          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
+                          title="Refresh provider accounts"
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[18px] text-text-muted ${isProviderLoading ? "animate-spin" : ""}`}
+                          >
+                            refresh
+                          </span>
+                        </button>
+                        <span className="material-symbols-outlined text-text-muted text-[20px]">
+                          {isExpanded ? "expand_less" : "expand_more"}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => refreshProvider(conn.id, conn.provider)}
-                      disabled={isLoading || rowBusy}
-                      className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
-                      title="Refresh quota"
-                    >
-                      <span
-                        className={`material-symbols-outlined text-[18px] text-text-muted ${isLoading ? "animate-spin" : ""}`}
-                      >
-                        refresh
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedConnection(conn);
+                  <div className="px-3 py-3">
+                    {isProviderLoading && group.mergedQuotas.length === 0 ? (
+                      <div className="text-center py-5 text-text-muted">
+                        <span className="material-symbols-outlined text-[28px] animate-spin">
+                          progress_activity
+                        </span>
+                      </div>
+                    ) : hasErrors && group.mergedQuotas.length === 0 ? (
+                      <div className="text-center py-5">
+                        <span className="material-symbols-outlined text-[28px] text-red-500">
+                          error
+                        </span>
+                        <p className="mt-1.5 text-xs text-text-muted">
+                          {group.errorEntries[0]?.error || "Failed to fetch provider usage"}
+                        </p>
+                      </div>
+                    ) : group.message && group.mergedQuotas.length === 0 ? (
+                      <div className="text-center py-5">
+                        <p className="text-xs text-text-muted">{group.message}</p>
+                      </div>
+                    ) : (
+                      <QuotaTable quotas={group.mergedQuotas} compact />
+                    )}
+                  </div>
+                </button>
+              </Card>
+
+              {isExpanded && (
+                <div className="space-y-3 pl-2 border-l border-black/10 dark:border-white/10">
+                  {group.connections.map((conn) => (
+                    <ConnectionQuotaCard
+                      key={conn.id}
+                      conn={conn}
+                      quota={quotaData[conn.id]}
+                      isLoading={loading[conn.id]}
+                      error={errors[conn.id]}
+                      deletingId={deletingId}
+                      togglingId={togglingId}
+                      onRefresh={refreshProvider}
+                      onEdit={(selected) => {
+                        setSelectedConnection(selected);
                         setShowEditModal(true);
                       }}
-                      disabled={rowBusy}
-                      className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
-                      title="Edit connection"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">
-                        edit
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteConnection(conn.id)}
-                      disabled={rowBusy}
-                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
-                      title="Delete connection"
-                    >
-                      <span
-                        className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
-                      >
-                        delete
-                      </span>
-                    </button>
-                    <div
-                      className="inline-flex items-center pl-0.5"
-                      title={
-                        (conn.isActive ?? true)
-                          ? "Disable connection"
-                          : "Enable connection"
-                      }
-                    >
-                      <Toggle
-                        size="sm"
-                        checked={conn.isActive ?? true}
-                        disabled={rowBusy}
-                        onChange={(nextActive) =>
-                          handleToggleConnectionActive(conn.id, nextActive)
-                        }
-                      />
-                    </div>
-                  </div>
+                      onDelete={handleDeleteConnection}
+                      onToggle={handleToggleConnectionActive}
+                    />
+                  ))}
                 </div>
-              </div>
-
-              <div className="px-3 py-3">
-                {isLoading ? (
-                  <div className="text-center py-5 text-text-muted">
-                    <span className="material-symbols-outlined text-[28px] animate-spin">
-                      progress_activity
-                    </span>
-                  </div>
-                ) : error ? (
-                  <div className="text-center py-5">
-                    <span className="material-symbols-outlined text-[28px] text-red-500">
-                      error
-                    </span>
-                    <p className="mt-1.5 text-xs text-text-muted">{error}</p>
-                  </div>
-                ) : quota?.message ? (
-                  <div className="text-center py-5">
-                    <p className="text-xs text-text-muted">{quota.message}</p>
-                  </div>
-                ) : (
-                  <QuotaTable quotas={quota?.quotas} compact />
-                )}
-              </div>
-            </Card>
+              )}
+            </div>
           );
         })}
       </div>

@@ -9,6 +9,16 @@ export class OpenCodeExecutor extends BaseExecutor {
     super("opencode", PROVIDERS.opencode);
   }
 
+  transformRequest(model, body) {
+    const transformed = { ...body };
+
+    if (transformed.reasoning_effort === "auto") {
+      delete transformed.reasoning_effort;
+    }
+
+    return transformed;
+  }
+
   buildUrl(model) {
     const base = "https://opencode.ai";
     return MESSAGES_MODELS.has(model)

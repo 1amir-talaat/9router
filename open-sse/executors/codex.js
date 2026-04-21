@@ -150,8 +150,13 @@ export class CodexExecutor extends BaseExecutor {
     // Ensure store is false (Codex requirement)
     body.store = false;
 
-    // Extract thinking level from model name suffix
-    // e.g., gpt-5.3-codex-high → high, gpt-5.3-codex → medium (default)
+    // Preserve Codex CLI service tier selection when provided.
+    // "auto" means let upstream choose the default tier.
+    if (body.service_tier === "auto") {
+      delete body.service_tier;
+    }
+
+    // Backward compatibility: accept legacy model suffixes like gpt-5.3-codex-high.
     const effortLevels = ['none', 'low', 'medium', 'high', 'xhigh'];
     let modelEffort = null;
     for (const level of effortLevels) {
@@ -163,11 +168,23 @@ export class CodexExecutor extends BaseExecutor {
       }
     }
 
-    // Priority: explicit reasoning.effort > reasoning_effort param > model suffix > default (medium)
-    if (!body.reasoning) {
-      const effort = body.reasoning_effort || modelEffort || 'low';
-      body.reasoning = { effort, summary: "auto" };
-    } else if (!body.reasoning.summary) {
+    // Priority: explicit reasoning.effort > reasoning_effort param > legacy model suffix.
+    // When nothing is selected, let upstream keep its normal default behavior.
+    if (body.reasoning_effort === "auto") {
+      delete body.reasoning_effort;
+    }
+    if (body.reasoning?.effort === "auto") {
+      delete body.reasoning.effort;
+    }
+
+    const selectedEffort = body.reasoning?.effort || body.reasoning_effort || modelEffort || null;
+    if (selectedEffort && !body.reasoning) {
+      body.reasoning = { effort: selectedEffort, summary: "auto" };
+    } else if (selectedEffort && body.reasoning && !body.reasoning.effort) {
+      body.reasoning.effort = selectedEffort;
+    }
+
+    if (body.reasoning && !body.reasoning.summary) {
       body.reasoning.summary = "auto";
     }
     delete body.reasoning_effort;
