@@ -3,10 +3,44 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { syncOpenCodeAccounts } from "@/lib/opencodeAccountSync";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
+import { getEffectiveQuotaRoutingState, getEarliestQuotaResetAt, isHardQuotaError, extractQuotaResetAtFromError } from "./quotaState.js";
 import * as log from "../utils/logger.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getUserHomeDir } from "@/lib/userHome";
+
+function compareByPriority(a, b) {
+  return (a.priority || 999) - (b.priority || 999);
+}
+
+function sortByMostRecentUse(connections) {
+  return [...connections].sort((a, b) => {
+    if (!a.lastUsedAt && !b.lastUsedAt) return compareByPriority(a, b);
+    if (!a.lastUsedAt) return 1;
+    if (!b.lastUsedAt) return -1;
+    const diff = new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
+    return diff || compareByPriority(a, b);
+  });
+}
+
+function sortByLeastRecentUse(connections) {
+  return [...connections].sort((a, b) => {
+    if (!a.lastUsedAt && !b.lastUsedAt) return compareByPriority(a, b);
+    if (!a.lastUsedAt) return -1;
+    if (!b.lastUsedAt) return 1;
+    const diff = new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
+    return diff || compareByPriority(a, b);
+  });
+}
+
+function categorizeByQuotaState(connections) {
+  return connections.reduce((groups, connection) => {
+    const routingState = getEffectiveQuotaRoutingState(connection);
+    groups[routingState.state] ||= [];
+    groups[routingState.state].push(connection);
+    return groups;
+  }, { available: [], unknown: [], exhausted: [] });
+}
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
@@ -52,25 +86,33 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     // Filter out model-locked and excluded connections
-    const availableConnections = connections.filter(c => {
-      if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
-      return true;
-    });
+     const availableConnections = connections.filter(c => {
+       if (excludeSet.has(c.id)) return false;
+       if (isModelLockActive(c, model)) return false;
+       return true;
+     });
 
-    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
-    connections.forEach(c => {
-      const excluded = excludeSet.has(c.id);
-      const locked = isModelLockActive(c, model);
-      if (excluded || locked) {
-        const lockUntil = getEarliestModelLockUntil(c);
-        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
-      }
-    });
+     const quotaBuckets = categorizeByQuotaState(availableConnections);
+     const routableConnections = quotaBuckets.available.length > 0
+       ? quotaBuckets.available
+       : quotaBuckets.unknown;
 
-    if (availableConnections.length === 0) {
-      // Find earliest lock expiry across all connections for retry timing
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
+     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | quota: available=${quotaBuckets.available.length}, unknown=${quotaBuckets.unknown.length}, exhausted=${quotaBuckets.exhausted.length}`);
+     connections.forEach(c => {
+       const excluded = excludeSet.has(c.id);
+       const locked = isModelLockActive(c, model);
+       const quotaState = getEffectiveQuotaRoutingState(c).state;
+       if (excluded || locked) {
+         const lockUntil = getEarliestModelLockUntil(c);
+         log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
+       } else if (quotaState === "exhausted") {
+         log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | quotaExhausted until ${c.quotaResetAt || "unknown"}`);
+       }
+     });
+
+     if (availableConnections.length === 0) {
+       // Find earliest lock expiry across all connections for retry timing
+       const lockedConns = connections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
       const earliest = expiries.sort()[0] || null;
       if (earliest) {
@@ -83,60 +125,41 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           lastError: earliestConn?.lastError || null,
           lastErrorCode: earliestConn?.errorCode || null
         };
-      }
-      log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
-      return null;
-    }
+       }
+       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
+       return null;
+     }
 
-    const settings = await getSettings();
-    // Per-provider strategy overrides global setting
-    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
+     if (routableConnections.length === 0 && quotaBuckets.exhausted.length > 0) {
+       const retryAfter = getEarliestQuotaResetAt(quotaBuckets.exhausted);
+       log.warn("AUTH", `${provider} | all ${quotaBuckets.exhausted.length} available accounts quota exhausted${retryAfter ? ` (${formatRetryAfter(retryAfter)})` : ""}`);
+       return {
+         allQuotaExhausted: true,
+         retryAfter,
+         retryAfterHuman: retryAfter ? formatRetryAfter(retryAfter) : "quota exhausted",
+         lastError: "All accounts exhausted their quota",
+         lastErrorCode: 429,
+       };
+     }
 
-    let connection;
-    if (strategy === "round-robin") {
-      const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
+      const settings = await getSettings();
+      const providerOverride = (settings.providerStrategies || {})[providerId] || {};
+      const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
-      // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
-        if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-        if (!a.lastUsedAt) return 1;
-        if (!b.lastUsedAt) return -1;
-        return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
-      });
-
-      const current = byRecency[0];
-      const currentCount = current?.consecutiveUseCount || 0;
-
-      if (current && current.lastUsedAt && currentCount < stickyLimit) {
-        // Stay with current account
-        connection = current;
-        // Update lastUsedAt and increment count (await to ensure persistence)
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        });
+      let connection;
+      if (strategy === "sticky") {
+        connection = sortByMostRecentUse(routableConnections)[0];
+      } else if (strategy === "round-robin") {
+        connection = sortByLeastRecentUse(routableConnections)[0];
       } else {
-        // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
-          if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-          if (!a.lastUsedAt) return -1;
-          if (!b.lastUsedAt) return 1;
-          return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
-        });
+        connection = routableConnections[0];
+      }
 
-        connection = sortedByOldest[0];
-
-        // Update lastUsedAt and reset count to 1 (await to ensure persistence)
+      if (connection && strategy !== "fill-first") {
         await updateProviderConnection(connection.id, {
           lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: 1
         });
       }
-    } else {
-      // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
-    }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
@@ -181,6 +204,29 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
+
+   if (isHardQuotaError(status, errorText)) {
+     const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Quota exhausted";
+     await updateProviderConnection(connectionId, {
+       quotaState: "exhausted",
+       quotaCheckedAt: new Date().toISOString(),
+       quotaResetAt: extractQuotaResetAtFromError(errorText),
+       quotaSource: "inferred",
+       quotaSummary: {
+         provider,
+         message: reason,
+         hasRemaining: false,
+         remainingPercentage: 0,
+         exhaustedWindows: [model || "__all"],
+       },
+       testStatus: "unavailable",
+       lastError: reason,
+       errorCode: status,
+       lastErrorAt: new Date().toISOString(),
+     });
+     return { shouldFallback: true, cooldownMs: 0 };
+   }
+
   const backoffLevel = conn?.backoffLevel || 0;
 
   const { shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel);
@@ -246,9 +292,25 @@ export async function clearAccountError(connectionId, currentConnection, model =
   const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
 
   // Only reset error state if no active locks remain
-  if (remainingActiveLocks.length === 0) {
-    Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null, backoffLevel: 0 });
-  }
+   if (remainingActiveLocks.length === 0) {
+     Object.assign(clearObj, {
+       testStatus: "active",
+       lastError: null,
+       lastErrorAt: null,
+       backoffLevel: 0,
+       quotaState: "available",
+       quotaCheckedAt: new Date().toISOString(),
+       quotaResetAt: null,
+       quotaSource: conn.quotaSource || "inferred",
+       quotaSummary: {
+         ...(conn.quotaSummary || {}),
+         hasRemaining: true,
+         remainingPercentage: conn.quotaSummary?.remainingPercentage ?? null,
+         exhaustedWindows: [],
+         message: null,
+       },
+     });
+   }
 
   await updateProviderConnection(connectionId, clearObj);
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
