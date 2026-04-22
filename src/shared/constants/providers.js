@@ -65,6 +65,7 @@ export const APIKEY_PROVIDERS = {
   "alicode-intl": { id: "alicode-intl", alias: "alicode-intl", name: "Alibaba Intl", icon: "cloud", color: "#FF6A00", textIcon: "ALi" },
   openai: { id: "openai", alias: "openai", name: "OpenAI", icon: "auto_awesome", color: "#10A37F", textIcon: "OA", website: "https://platform.openai.com", serviceKinds: ["llm", "embedding", "tts", "image", "imageToText", "webSearch"], thinkingConfig: THINKING_CONFIG.effort },
   anthropic: { id: "anthropic", alias: "anthropic", name: "Anthropic", icon: "smart_toy", color: "#D97757", textIcon: "AN", website: "https://console.anthropic.com", serviceKinds: ["llm", "imageToText"] },
+  "opencode-go": { id: "opencode-go", alias: "ocg", name: "OpenCode Go", icon: "terminal", color: "#E87040", textIcon: "OC", website: "https://opencode.ai/auth", notice: { text: "OpenCode Go subscription: $5/mo (then $10/mo). Access to Kimi, GLM, Qwen, MiMo, MiniMax models.", apiKeyUrl: "https://opencode.ai/auth" } },
 
 
   deepseek: { id: "deepseek", alias: "ds", name: "DeepSeek", icon: "bolt", color: "#4D6BFE", textIcon: "DS", website: "https://deepseek.com" },
@@ -103,6 +104,12 @@ export const APIKEY_PROVIDERS = {
   firecrawl: { id: "firecrawl", alias: "firecrawl", name: "Firecrawl", icon: "local_fire_department", color: "#F59E0B", textIcon: "FC", website: "https://firecrawl.dev", serviceKinds: ["webFetch"] },
 };
 
+// Web Cookie Providers (use browser session cookie instead of API key)
+export const WEB_COOKIE_PROVIDERS = {
+  "grok-web": { id: "grok-web", alias: "gw", name: "Grok Web (Subscription)", icon: "auto_awesome", color: "#1DA1F2", textIcon: "GW", website: "https://grok.com", authType: "cookie", authHint: "Paste your sso= cookie value from grok.com", passthroughModels: true, serviceKinds: ["llm"] },
+  "perplexity-web": { id: "perplexity-web", alias: "pw", name: "Perplexity Web (Pro/Max)", icon: "search", color: "#20808D", textIcon: "PW", website: "https://www.perplexity.ai", authType: "cookie", authHint: "Paste your __Secure-next-auth.session-token cookie value from perplexity.ai", serviceKinds: ["llm"] },
+};
+
 // Media provider kinds — each kind maps to a route and endpoint config
 export const MEDIA_PROVIDER_KINDS = [
   { id: "embedding",   label: "Embedding",      icon: "data_array",        endpoint: { method: "POST", path: "/v1/embeddings" } },
@@ -128,12 +135,13 @@ export function isAnthropicCompatibleProvider(providerId) {
 }
 
 // All providers (combined)
-export const AI_PROVIDERS = { ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS };
+export const AI_PROVIDERS = { ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS, ...WEB_COOKIE_PROVIDERS };
 
 // Auth methods
 export const AUTH_METHODS = {
   oauth: { id: "oauth", name: "OAuth", icon: "lock" },
   apikey: { id: "apikey", name: "API Key", icon: "key" },
+  cookie: { id: "cookie", name: "Browser Cookie", icon: "cookie" },
 };
 
 // Helper: Get provider by alias
@@ -190,4 +198,5 @@ export const USAGE_SUPPORTED_PROVIDERS = [
   "github",
   "codex",
   "kimi-coding",
+  "ollama",
 ];
