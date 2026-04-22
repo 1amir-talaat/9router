@@ -1,13 +1,19 @@
 {
   "name": "9router-app",
-  "version": "0.3.98",
+  "version": "0.3.96",
   "description": "9Router web dashboard",
   "private": true,
   "packageManager": "pnpm@10.28.0",
+  "bin": {
+    "9": "scripts/9-cli.cjs",
+    "9router": "scripts/9router-cli.cjs"
+  },
   "scripts": {
     "dev": "next dev --webpack --port 20128",
     "build": "cross-env NODE_ENV=production next build --webpack",
     "start": "cross-env NODE_ENV=production next start --port 20128",
+    "desktop": "node scripts/desktop-launcher.cjs",
+    "desktop:hidden": "node scripts/desktop-launcher.cjs --hidden",
     "dev:bun": "bun --bun next dev --webpack --port 20128",
     "build:bun": "cross-env NODE_ENV=production bun --bun next build --webpack",
     "start:bun": "cross-env NODE_ENV=production bun ./.next/standalone/server.js"
@@ -47,6 +53,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "electron": "^41.2.2",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "postcss": "^8.5.6",

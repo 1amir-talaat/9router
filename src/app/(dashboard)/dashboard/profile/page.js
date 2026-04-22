@@ -24,6 +24,8 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+  const [desktopStatus, setDesktopStatus] = useState({ type: "", message: "" });
+  const [desktopLoading, setDesktopLoading] = useState(false);
 
   const routingOptions = [
     { value: "fill-first", label: "Fill First" },
@@ -252,6 +254,36 @@ export default function ProfilePage() {
     }
   };
 
+  const updateDesktopLaunchAtLogin = async (enabled) => {
+    setDesktopLoading(true);
+    setDesktopStatus({ type: "", message: "" });
+
+    try {
+      const res = await fetch("/api/desktop/startup", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update Windows startup");
+      }
+
+      setSettings((prev) => ({ ...prev, desktopLaunchAtLogin: data.desktopLaunchAtLogin === true }));
+      setDesktopStatus({
+        type: "success",
+        message: enabled
+          ? "9Router will now start in the background when you sign into Windows"
+          : "9Router will no longer start automatically with Windows",
+      });
+    } catch (err) {
+      setDesktopStatus({ type: "error", message: err.message || "Failed to update Windows startup" });
+    } finally {
+      setDesktopLoading(false);
+    }
+  };
+
   const handleExportDatabase = async () => {
     setDbLoading(true);
     setDbStatus({ type: "", message: "" });
@@ -355,14 +387,27 @@ export default function ProfilePage() {
               ))}
             </div>
           </div>
-          <div className="flex flex-col gap-3 pt-4 border-t border-border">
-            <div className="flex items-center justify-between p-3 rounded-lg bg-bg border border-border">
-              <div>
-                <p className="font-medium">Database Location</p>
-                <p className="text-sm text-text-muted font-mono">~/.9router/db.json</p>
+            <div className="flex flex-col gap-3 pt-4 border-t border-border">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-bg border border-border">
+                <div>
+                  <p className="font-medium">Database Location</p>
+                  <p className="text-sm text-text-muted font-mono">~/.9router/db.json</p>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-bg border border-border gap-4">
+                <div>
+                  <p className="font-medium">Start with Windows</p>
+                  <p className="text-sm text-text-muted">
+                    Launch 9Router in the background when you sign into Windows.
+                  </p>
+                </div>
+                <Toggle
+                  checked={settings.desktopLaunchAtLogin === true}
+                  onChange={() => updateDesktopLaunchAtLogin(!(settings.desktopLaunchAtLogin === true))}
+                  disabled={loading || desktopLoading}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
                 icon="download"
@@ -387,13 +432,18 @@ export default function ProfilePage() {
                 onChange={handleImportDatabase}
               />
             </div>
-            {dbStatus.message && (
-              <p className={`text-sm ${dbStatus.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}>
-                {dbStatus.message}
-              </p>
-            )}
-          </div>
-        </Card>
+              {dbStatus.message && (
+                <p className={`text-sm ${dbStatus.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}>
+                  {dbStatus.message}
+                </p>
+              )}
+              {desktopStatus.message && (
+                <p className={`text-sm ${desktopStatus.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}>
+                  {desktopStatus.message}
+                </p>
+              )}
+            </div>
+          </Card>
 
         {/* Security */}
         <Card>

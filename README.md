@@ -91,7 +91,22 @@ Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline Settings:
 
 **Alternative: run from source (this repository):**
 
-This repository package is private (`9router-app`), so source/Docker execution is the expected local development path.
+This repository package is private (`9router-app`), but it now exposes a local Windows CLI wrapper so your source checkout can behave like the published app.
+
+Windows local desktop setup:
+
+```bash
+npm install
+npm link
+9router
+```
+
+What this does on Windows:
+
+- starts your local edited repo
+- opens the existing 9Router UI in a desktop window
+- shows up in the Windows taskbar as `9Router`
+- lets you enable `Start with Windows` from Dashboard -> Profile
 
 ```bash
 cp .env.example .env
